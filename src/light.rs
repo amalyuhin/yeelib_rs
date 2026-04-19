@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{SocketAddr, SocketAddrV4, TcpStream};
-use std::ops::Add;
 
 use lazy_static::*;
 use regex::Regex;
