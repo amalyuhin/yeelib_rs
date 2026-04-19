@@ -2,10 +2,11 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{SocketAddr, SocketAddrV4, TcpStream};
+use std::ops::Add;
 
 use lazy_static::*;
 use regex::Regex;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::err::YeeError;
 use crate::fields::{ColorMode, PowerStatus, Rgb};
@@ -35,6 +36,15 @@ pub struct Light {
     sat: u8,
 
     name: String,
+
+    // Background light fields (optional - not all devices have them)
+    bg_power: Option<PowerStatus>,
+    bg_bright: Option<u8>,
+    bg_color_mode: Option<ColorMode>,
+    bg_ct: Option<u16>,
+    bg_rgb: Option<Rgb>,
+    bg_hue: Option<u16>,
+    bg_sat: Option<u8>,
 
     // wrapped in option for late init
     // if successfully made a Light, can always assume it is valid
@@ -121,16 +131,63 @@ impl Light {
             _ => panic!("Light should not have an IPv6 address")
         };
 
-        Ok(Light { location, id, model, fw_ver, power, support, bright, color_mode, ct, rgb, hue, sat, name, read: None, write: None })
+        Ok(Light {
+            location,
+            id,
+            model,
+            fw_ver,
+            power,
+            support,
+            bright,
+            color_mode,
+            ct,
+            rgb,
+            hue,
+            sat,
+            name,
+            bg_power: None,
+            bg_bright: None,
+            bg_color_mode: None,
+            bg_ct: None,
+            bg_rgb: None,
+            bg_hue: None,
+            bg_sat: None,
+            read: None,
+            write: None
+        })
     }
 
     pub(crate) fn init(&mut self) -> Result<(), YeeError> {
         if self.read.is_some() {
             return Ok(());
         }
+
         let connection = TcpStream::connect(self.location)?;
         self.write = Some(BufWriter::new(connection.try_clone()?));
         self.read = Some(BufReader::new(connection));
+
+        self.refresh_bg_properties()?;
+
+        Ok(())
+    }
+
+    pub fn refresh_bg_properties(&mut self) -> Result<(), YeeError> {
+        if !self.support.contains("bg_set_power") {
+            return Ok(()); // Device doesn't have background properties
+        }
+
+        let props = self.get_prop(&["bg_power", "bg_bright", "bg_lmode", "bg_ct", "bg_rgb", "bg_hue", "bg_sat"])?;
+
+        if props.len() >= 7 {
+            self.bg_power = props[0].parse::<PowerStatus>().ok();
+            self.bg_bright = props[1].parse::<u8>().ok();
+            self.bg_color_mode = props[2].parse::<ColorMode>().ok();
+            self.bg_ct = props[3].parse::<u16>().ok();
+            self.bg_rgb = props[4].parse::<Rgb>().ok();
+            self.bg_hue = props[5].parse::<u16>().ok();
+            self.bg_sat = props[6].parse::<u8>().ok();
+        }
+
         Ok(())
     }
 
@@ -231,6 +288,40 @@ impl Light {
         Ok(())
     }
 
+    pub fn bg_set_power(&mut self, power: PowerStatus, transition: Transition) -> Result<(), YeeError> {
+        check_support!(self, "bg_set_power")?;
+        let req = Req::new("bg_set_power".to_string(), vec![json!(power.to_string()), json!(transition.text()), json!(transition.text())]);
+        self.send_req(&req)?;
+        self.bg_power = Some(power);
+        Ok(())
+    }
+
+    pub fn bg_toggle(&mut self) -> Result<(), YeeError> {
+        check_support!(self, "bg_toggle")?;
+        let req = Req::new("bg_toggle".to_string(), vec![]);
+        self.send_req(&req)?;
+
+        if self.bg_power.is_some() {
+            self.bg_power = Some(self.bg_power.unwrap().flip());
+        }
+
+        Ok(())
+    }
+
+    pub fn bg_start_cf(&mut self, count: u8, action: u8, flow: Vec<(u32, u8, u32, u8)>) -> Result<(), YeeError> {
+        check_support!(self, "bg_start_cf")?;
+
+        let flow_expression = flow.into_iter()
+            .map(|(d, m, v, b)| format!("{d}, {m}, {v}, {b}"))
+            .collect::<Vec<String>>()
+            .join(",");
+
+        let req = Req::new("bg_start_cf".to_string(), vec![json!(count), json!(action), json!(flow_expression)]);
+        self.send_req(&req)?;
+
+        Ok(())
+    }
+
     pub(crate) fn send_req(&mut self, req: &Req) -> Result<(), YeeError> {
         let rand_val = req.id.to_string();
         let mut json = serde_json::to_string(req).unwrap();
@@ -254,6 +345,40 @@ impl Light {
             Err(YeeError::ChangeFailed { message: s })
         } else {
             Ok(())
+        }
+    }
+
+    pub fn get_prop(&mut self, props: &[&str]) -> Result<Vec<String>, YeeError> {
+        check_support!(self, "get_prop")?;
+        let params: Vec<Value> = props.iter().map(|&p| json!(p)).collect();
+        let req = Req::new("get_prop".to_string(), params);
+
+        let rand_val = req.id.to_string();
+        let mut json = serde_json::to_string(&req).unwrap();
+        let reader = self.read.as_mut().unwrap();
+        let writer = self.write.as_mut().unwrap();
+        json.push_str("\r\n");
+        writer.write_all(json.as_bytes())?;
+        writer.flush()?;
+
+        let mut buf = String::new();
+        while !buf.contains(&rand_val) {
+            reader.read_line(&mut buf)?;
+        }
+
+        if buf.contains("error") {
+            let s = MATCH_ERR_MSG.captures(&buf)
+                .and_then(|c| c.get(0))
+                .map(|s| s.as_str().to_string())
+                .unwrap_or_else(String::new);
+            Err(YeeError::ChangeFailed { message: s })
+        } else {
+            let response: serde_json::Value = serde_json::from_str(&buf)
+                .map_err(|_| YeeError::ChangeFailed { message: "Failed to parse response".to_string() })?;
+            let results = response["result"].as_array()
+                .ok_or(YeeError::ChangeFailed { message: "No result array".to_string() })?;
+
+            Ok(results.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect())
         }
     }
 

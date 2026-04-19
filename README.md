@@ -1,15 +1,6 @@
 # yeelib_rs
 
-![Crates.io badge](https://img.shields.io/crates/v/yeelib_rs?style=flat-square)
-![License](https://img.shields.io/crates/l/yeelib_rs?style=flat-square)
-
-A Rust library for easy interfacing with Yeelight products, including LAN light discovery
-with [multicast](https://en.wikipedia.org/wiki/Multicast)
-and [SSDP](https://en.wikipedia.org/wiki/Simple_Service_Discovery_Protocol), with intended implementation of all major
-parts of the [Yeelight Third-party Control Protocol](https://www.yeelight.com/en_US/developer).
-
-- [View on crates.io](https://crates.io/crates/yeelib_rs)
-- [Documentation](https://docs.rs/yeelib_rs/)
+Fork of https://github.com/teppah/yeelib_rs
 
 ## Getting started
 
@@ -64,28 +55,7 @@ set_power
 toggle
 adjust_bright
 adjust_ct
+bg_set_power
+bg_toggle
+bg_start_cf
 ```
-
-## To do
-
-- Document every component
-- ~~Flatten public exports~~
-- Finish implementation of the API
-- Improve test coverage
-- Handle API errors
-
-## License
-
-Licensed under either of
-
-* Apache License, Version 2.0
-  ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-* MIT license
-  ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-
-at your option.
-
-## Contribution
-
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as
-defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
